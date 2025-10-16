@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isParentOfChild(childId) {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/children/$(childId)).data.parentId == request.auth.uid;
+    }
+
+    function isGroupMember(groupId, childIds) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/groups/$(groupId)) &&
+        get(/databases/$(database)/documents/groups/$(groupId)).data.members.hasAny(childIds);
+    }
+
+    // Users collection - parents can only access their own data
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Children collection - parents can manage their own children
+    match /children/{childId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isParentOfChild(childId);
+    }
+
+    // Groups collection
+    match /groups/{groupId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() &&
+        request.auth.uid in resource.data.adminIds;
+      allow delete: if isAuthenticated() &&
+        request.auth.uid == resource.data.createdBy;
+    }
+
+    // Playdates collection
+    match /playdates/{playdateId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated() &&
+        request.auth.uid == resource.data.createdByParentId;
+    }
+
+    // Notifications collection
+    match /notifications/{notifId} {
+      allow read: if isAuthenticated() &&
+        request.auth.uid == resource.data.recipientId;
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() &&
+        request.auth.uid == resource.data.recipientId;
+      allow delete: if isAuthenticated() &&
+        request.auth.uid == resource.data.recipientId;
+    }
+
+    // Invite codes collection - read-only for users, write via Cloud Functions
+    match /inviteCodes/{code} {
+      allow read: if isAuthenticated();
+      allow write: if false; // Only Cloud Functions can write
+    }
+  }
+}
